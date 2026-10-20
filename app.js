@@ -648,6 +648,23 @@ function initUI() {
     state.smoothRollRad = 0;
     showToast('🎯 รีเซ็ตจุดศูนย์กลางภาพแล้ว');
   });
+
+  // Settings Modal Controls
+  const settingsModal = document.getElementById('settingsModal');
+  const btnOpenSettings = document.getElementById('btnOpenSettings');
+  const btnCloseSettings = document.getElementById('btnCloseSettings');
+
+  if (btnOpenSettings && settingsModal) {
+    btnOpenSettings.addEventListener('click', () => {
+      settingsModal.classList.remove('hidden');
+    });
+  }
+
+  if (btnCloseSettings && settingsModal) {
+    btnCloseSettings.addEventListener('click', () => {
+      settingsModal.classList.add('hidden');
+    });
+  }
 }
 
 // Register Offline Service Worker
