@@ -22,12 +22,19 @@ let recTimerInterval = null;
 // Stabilization State
 const state = {
   enabled: true,
-  smoothness: 0.72,
-  cropPercent: 0.20,
+  smoothness: 0.82,       // Stronger damping
+  cropPercent: 0.35,      // Big 35% margin for Super Steady action
   useHorizonLock: true,
   targetResHeight: 720,
   videoBitrate: 8000000,
 
+  // Gyroscope Angles
+  gyroPitch: 0,
+  gyroRoll: 0,
+  smoothGyroPitch: 0,
+  smoothGyroRoll: 0,
+
+  // Displacement
   velX: 0,
   velY: 0,
   offsetX: 0,
@@ -142,8 +149,28 @@ window.startCamera = async function () {
     permOverlay.classList.add('hidden');
   }
 
+  // Force Continuous Autofocus
+  const track = stream.getVideoTracks()[0];
+  if (track && track.applyConstraints) {
+    try {
+      await track.applyConstraints({
+        advanced: [{ focusMode: 'continuous', whiteBalanceMode: 'continuous' }]
+      });
+    } catch (e) {}
+  }
+
   showToast(`เปิดกล้องสำเร็จ (${vw}×${vh})`);
 };
+
+// Listen to Gyroscope Orientation for Smooth Camera Pitch & Roll
+window.addEventListener('deviceorientation', (e) => {
+  if (!state.enabled) return;
+  // Beta = Pitch (Tilt forward/back), Gamma = Roll (Tilt left/right)
+  if (e.beta !== null && e.gamma !== null) {
+    state.gyroPitch = (e.beta - 60) * (Math.PI / 180); // Neutral ~60 deg holding angle
+    state.gyroRoll = e.gamma * (Math.PI / 180);
+  }
+}, { passive: true });
 
 // 2. Accelerometer Shake & Horizon Lock Sensor
 window.addEventListener('devicemotion', (e) => {
@@ -185,9 +212,17 @@ function renderLoop() {
   const cw = steadyCanvas.width;
   const ch = steadyCanvas.height;
 
+  // 1. Gyro low-pass smoothing
+  state.smoothGyroPitch = state.smoothGyroPitch * 0.88 + state.gyroPitch * 0.12;
+  state.smoothGyroRoll = state.smoothGyroRoll * 0.88 + state.gyroRoll * 0.12;
+
+  // Angular displacement in pixels
+  const gyroShiftY = (state.smoothGyroPitch - state.gyroPitch) * ch * 0.75;
+  const gyroShiftX = (state.smoothGyroRoll - state.gyroRoll) * cw * 0.75;
+
   if (state.enabled) {
-    state.velX -= state.offsetX * 0.15;
-    state.velY -= state.offsetY * 0.15;
+    state.velX -= state.offsetX * 0.18;
+    state.velY -= state.offsetY * 0.18;
 
     state.velX *= state.smoothness;
     state.velY *= state.smoothness;
@@ -195,10 +230,10 @@ function renderLoop() {
     state.offsetX += state.velX;
     state.offsetY += state.velY;
 
-    const maxShiftX = cw * (state.cropPercent * 0.42);
-    const maxShiftY = ch * (state.cropPercent * 0.42);
-    state.offsetX = Math.max(-maxShiftX, Math.min(maxShiftX, state.offsetX));
-    state.offsetY = Math.max(-maxShiftY, Math.min(maxShiftY, state.offsetY));
+    const maxShiftX = cw * (state.cropPercent * 0.45);
+    const maxShiftY = ch * (state.cropPercent * 0.45);
+    state.offsetX = Math.max(-maxShiftX, Math.min(maxShiftX, state.offsetX + gyroShiftX));
+    state.offsetY = Math.max(-maxShiftY, Math.min(maxShiftY, state.offsetY + gyroShiftY));
   } else {
     state.offsetX = 0;
     state.offsetY = 0;
@@ -380,6 +415,42 @@ function initUI() {
         });
       }
     }, { passive: true });
+  }
+
+  // Tap to Focus Reticle on Screen
+  const focusBox = document.getElementById('focusBox');
+  if (cameraRoot && focusBox) {
+    cameraRoot.addEventListener('click', async (e) => {
+      // Ignore if clicking buttons or overlays
+      if (e.target.closest('button') || e.target.closest('.settings-modal-overlay') || e.target.closest('.permission-overlay')) return;
+
+      const rect = cameraRoot.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      focusBox.style.left = `${x}px`;
+      focusBox.style.top = `${y}px`;
+      focusBox.classList.remove('hidden');
+      focusBox.classList.add('active');
+
+      clearTimeout(focusBox._timer);
+      focusBox._timer = setTimeout(() => {
+        focusBox.classList.remove('active');
+        setTimeout(() => focusBox.classList.add('hidden'), 200);
+      }, 1200);
+
+      // Re-trigger Continuous Focus via Hardware Track Constraints
+      if (currentStream) {
+        const track = currentStream.getVideoTracks()[0];
+        if (track && track.applyConstraints) {
+          try {
+            await track.applyConstraints({
+              advanced: [{ focusMode: 'continuous' }]
+            });
+          } catch (err) {}
+        }
+      }
+    });
   }
 
   // Buttons
