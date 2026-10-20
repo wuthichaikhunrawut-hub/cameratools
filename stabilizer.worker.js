@@ -71,33 +71,33 @@ self.onmessage = function (e) {
     const medianDx = dxs[mid] / width;
     const medianDy = dys[mid] / height;
 
-    // Deadzone to kill sensor noise when standing still
-    const deadzone = 0.003;
+    // Deadzone to completely kill micro-jitter and drift when holding still
+    const deadzone = 0.008; // Filter out small noise
     const filteredDx = Math.abs(medianDx) > deadzone ? medianDx : 0;
     const filteredDy = Math.abs(medianDy) > deadzone ? medianDy : 0;
 
     camX += filteredDx;
     camY += filteredDy;
 
-    // Virtual Camera Smoothing
+    // Strong auto-centering spring so camera NEVER drifts or floats away
+    camX *= 0.92;
+    camY *= 0.92;
+
     const alpha = smoothness || 0.82;
     smoothX = smoothX * alpha + camX * (1 - alpha);
     smoothY = smoothY * alpha + camY * (1 - alpha);
 
-    // Compute corrective offset
+    // Compute corrective offset with tight bounds
     let offX = (smoothX - camX);
     let offY = (smoothY - camY);
 
-    // Spring clamp
-    const maxBound = 0.16;
-    if (Math.abs(offX) > maxBound) {
-      offX = Math.sign(offX) * maxBound;
-      smoothX = camX + offX;
-    }
-    if (Math.abs(offY) > maxBound) {
-      offY = Math.sign(offY) * maxBound;
-      smoothY = camY + offY;
-    }
+    const maxBound = 0.12; // Controlled steady zone
+    if (Math.abs(offX) > maxBound) offX = Math.sign(offX) * maxBound;
+    if (Math.abs(offY) > maxBound) offY = Math.sign(offY) * maxBound;
+
+    // Zero out sub-pixel jitter
+    if (Math.abs(offX) < 0.002) offX = 0;
+    if (Math.abs(offY) < 0.002) offY = 0;
 
     self.postMessage({
       type: 'MOTION_RESULT',

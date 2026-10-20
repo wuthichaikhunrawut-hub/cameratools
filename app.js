@@ -185,14 +185,15 @@ window.startCamera = async function () {
   showToast(`เปิดกล้อง V3 สำเร็จ (${vw}×${vh})`);
 };
 
-// 2. Horizon Angle Sensor (Filtered)
+// 2. Horizon Angle Sensor (Rock-Solid Low-Pass Filter)
 window.addEventListener('devicemotion', (e) => {
-  if (!state.enabled) return;
+  if (!state.enabled || !state.useHorizonLock) return;
   const ag = e.accelerationIncludingGravity;
   if (ag && ag.x !== null && ag.y !== null) {
     const roll = Math.atan2(ag.x, ag.y);
-    if (Math.abs(roll) < 0.75) {
-      if (Math.abs(roll - state.rawRollRad) > 0.012) {
+    // Only respond to intentional tilt within +-35 deg, ignore tiny shakes
+    if (Math.abs(roll) < 0.6) {
+      if (Math.abs(roll - state.rawRollRad) > 0.035) { // 2 degrees deadband
         state.rawRollRad = roll;
       }
     }
@@ -210,9 +211,9 @@ function renderLoop() {
   const cw = steadyCanvas.width;
   const ch = steadyCanvas.height;
 
-  // Send frame to Web Worker (every 2nd frame, non-blocking)
+  // Send frame to Web Worker (every 3rd frame to avoid over-correcting)
   frameCounter++;
-  if (state.enabled && stabilizerWorker && !isWorkerBusy && frameCounter % 2 === 0) {
+  if (state.enabled && stabilizerWorker && !isWorkerBusy && frameCounter % 3 === 0) {
     offCtx.drawImage(rawVideo, 0, 0, WORKER_SIZE, WORKER_SIZE);
     const imgData = offCtx.getImageData(0, 0, WORKER_SIZE, WORKER_SIZE);
     const grayBuffer = new Uint8Array(WORKER_SIZE * WORKER_SIZE);
@@ -233,15 +234,20 @@ function renderLoop() {
 
   // Smooth interpolation of worker offset
   if (state.enabled) {
-    state.smoothOffsetX = state.smoothOffsetX * 0.8 + state.workerOffsetX * 0.2;
-    state.smoothOffsetY = state.smoothOffsetY * 0.8 + state.workerOffsetY * 0.2;
+    state.smoothOffsetX = state.smoothOffsetX * 0.88 + state.workerOffsetX * 0.12;
+    state.smoothOffsetY = state.smoothOffsetY * 0.88 + state.workerOffsetY * 0.12;
+
+    // Decay to center if worker offset is near zero
+    if (Math.abs(state.smoothOffsetX) < 0.001) state.smoothOffsetX = 0;
+    if (Math.abs(state.smoothOffsetY) < 0.001) state.smoothOffsetY = 0;
   } else {
     state.smoothOffsetX = 0;
     state.smoothOffsetY = 0;
   }
 
-  // Horizon lock smoothing
-  state.smoothRollRad = state.smoothRollRad * 0.90 + state.rawRollRad * 0.10;
+  // Ultra-Smooth Horizon Lock (96% heavy damping so it NEVER wobbles)
+  state.smoothRollRad = state.smoothRollRad * 0.96 + state.rawRollRad * 0.04;
+  if (Math.abs(state.smoothRollRad) < 0.008) state.smoothRollRad = 0;
   const activeRoll = (state.enabled && state.useHorizonLock) ? -state.smoothRollRad : 0;
 
   // Render to canvas
