@@ -179,32 +179,61 @@ async function applyHardwareZoom(zoomLevel) {
   } catch (e) {}
 }
 
-// Start Camera Stream with Oversampled Resolution
+// Start Camera Stream with Robust Universal Compatibility
 async function startCamera() {
   const permOverlay = document.getElementById('permissionOverlay');
+  const btnStartCamera = document.getElementById('btnStartCamera');
 
-  if (currentStream) {
-    currentStream.getTracks().forEach((t) => t.stop());
+  if (btnStartCamera) {
+    btnStartCamera.textContent = 'กำลังเปิดกล้อง... ⏳';
+    btnStartCamera.disabled = true;
   }
 
-  const targetH = state.targetResHeight || 720;
-  const targetW = Math.round((targetH * 16) / 9);
+  if (currentStream) {
+    try {
+      currentStream.getTracks().forEach((t) => t.stop());
+    } catch (e) {}
+  }
 
-  // Cross-device fallback constraints (Supports Samsung, iPhone, Vivo)
-  const constraints = {
-    audio: false,
-    video: {
-      facingMode: { ideal: facingMode },
-      width: { ideal: targetW, min: 640 },
-      height: { ideal: targetH, min: 480 },
-      frameRate: { ideal: 60, min: 24 }
+  // Multi-tier fallback strategy (Works on Samsung S26 Ultra, Vivo, iOS, Xiaomi)
+  const configs = [
+    // 1. Back camera with ideal 720p
+    { video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+    // 2. Simple back camera
+    { video: { facingMode: facingMode }, audio: false },
+    // 3. Any available camera
+    { video: true, audio: false }
+  ];
+
+  let stream = null;
+  let lastErr = null;
+
+  for (const constraint of configs) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraint);
+      if (stream) break;
+    } catch (err) {
+      lastErr = err;
     }
-  };
+  }
 
-  try {
-    currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-    rawVideo.srcObject = currentStream;
-    await rawVideo.play();
+  if (!stream) {
+    if (btnStartCamera) {
+      btnStartCamera.textContent = 'ลองเปิดกล้องอีกครั้ง';
+      btnStartCamera.disabled = false;
+    }
+    alert('ไม่สามารถเข้าถึงกล้องได้: ' + (lastErr ? lastErr.message : 'กรุณาตรวจสอบการอนุญาตสิทธิ์กล้องในเบราว์เซอร์'));
+    return;
+  }
+
+  currentStream = stream;
+  rawVideo.srcObject = stream;
+
+  // Wait for video stream to actually produce frames
+  rawVideo.onloadedmetadata = async () => {
+    try {
+      await rawVideo.play();
+    } catch (e) {}
 
     const vw = rawVideo.videoWidth || 1280;
     const vh = rawVideo.videoHeight || 720;
@@ -212,32 +241,17 @@ async function startCamera() {
     steadyCanvas.width = vw;
     steadyCanvas.height = vh;
 
-    // Hide permission overlay once camera is running
+    // Instantly hide overlay
     if (permOverlay) {
       permOverlay.classList.add('hidden');
     }
 
-    await applyHardwareEnhancements();
+    try {
+      await applyHardwareEnhancements();
+    } catch (e) {}
     updateGpuFilters();
-    showToast(`เปิดกล้องสำเร็จ (${vw}×${vh})`);
-  } catch (err) {
-    console.error('Camera error:', err);
-    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-      alert('เบราว์เซอร์ไม่อนุญาตให้ใช้กล้อง: กรุณาแตะที่รูปกุญแจ 🔒 หรือการตั้งค่าหน้าเว็บเพื่อกด "อนุญาตให้ใช้กล้อง"');
-    } else {
-      // Try ultra-simple fallback constraint if high-res failed
-      try {
-        currentStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        rawVideo.srcObject = currentStream;
-        await rawVideo.play();
-        steadyCanvas.width = rawVideo.videoWidth || 640;
-        steadyCanvas.height = rawVideo.videoHeight || 480;
-        if (permOverlay) permOverlay.classList.add('hidden');
-      } catch (fallbackErr) {
-        alert('ไม่สามารถเปิดกล้องได้: ' + fallbackErr.message);
-      }
-    }
-  }
+    showToast(`เปิดกล้องสำเร็จ (${vw}×${vh})`, 1800);
+  };
 }
 
 // Fast 9-Block Visual Optical Flow Estimator (Optimized for Mobile)
