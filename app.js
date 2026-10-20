@@ -180,13 +180,28 @@ async function applyHardwareZoom(zoomLevel) {
 }
 
 // Start Camera Stream with Robust Universal Compatibility
-async function startCamera() {
+window.startCamera = async function startCamera() {
   const permOverlay = document.getElementById('permissionOverlay');
   const btnStartCamera = document.getElementById('btnStartCamera');
+  const permErrorMsg = document.getElementById('permErrorMsg');
 
   if (btnStartCamera) {
-    btnStartCamera.textContent = 'กำลังเปิดกล้อง... ⏳';
-    btnStartCamera.disabled = true;
+    btnStartCamera.textContent = 'กำลังขอเปิดกล้อง... ⏳';
+    btnStartCamera.style.opacity = '0.7';
+  }
+  if (permErrorMsg) {
+    permErrorMsg.style.display = 'none';
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const msg = 'เบราว์เซอร์นี้ไม่รองรับ Camera API หรือไม่ได้เปิดผ่าน HTTPS';
+    if (permErrorMsg) {
+      permErrorMsg.textContent = msg;
+      permErrorMsg.style.display = 'block';
+    }
+    alert(msg);
+    if (btnStartCamera) btnStartCamera.textContent = 'เปิดใช้งานกล้อง (Start Camera)';
+    return;
   }
 
   if (currentStream) {
@@ -195,13 +210,10 @@ async function startCamera() {
     } catch (e) {}
   }
 
-  // Multi-tier fallback strategy (Works on Samsung S26 Ultra, Vivo, iOS, Xiaomi)
+  // Multi-tier fallback strategy
   const configs = [
-    // 1. Back camera with ideal 720p
     { video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
-    // 2. Simple back camera
     { video: { facingMode: facingMode }, audio: false },
-    // 3. Any available camera
     { video: true, audio: false }
   ];
 
@@ -218,41 +230,42 @@ async function startCamera() {
   }
 
   if (!stream) {
-    if (btnStartCamera) {
-      btnStartCamera.textContent = 'ลองเปิดกล้องอีกครั้ง';
-      btnStartCamera.disabled = false;
+    const errMsg = (lastErr && lastErr.name === 'NotAllowedError') 
+      ? '⚠️ คุณปฏิเสธสิทธิ์การใช้กล้อง: กรุณากดที่รูปกุญแจ 🔒 ที่แถบ URL เพื่อกดอนุญาต' 
+      : '⚠️ ไม่สามารถเปิดกล้องได้: ' + (lastErr ? lastErr.message : 'กรุณาตรวจสอบสิทธิ์กล้อง');
+
+    if (permErrorMsg) {
+      permErrorMsg.textContent = errMsg;
+      permErrorMsg.style.display = 'block';
     }
-    alert('ไม่สามารถเข้าถึงกล้องได้: ' + (lastErr ? lastErr.message : 'กรุณาตรวจสอบการอนุญาตสิทธิ์กล้องในเบราว์เซอร์'));
+    if (btnStartCamera) {
+      btnStartCamera.textContent = 'ลองเปิดกล้องอีกครั้ง 🔄';
+      btnStartCamera.style.opacity = '1';
+    }
     return;
   }
 
   currentStream = stream;
   rawVideo.srcObject = stream;
 
-  // Wait for video stream to actually produce frames
-  rawVideo.onloadedmetadata = async () => {
-    try {
-      await rawVideo.play();
-    } catch (e) {}
+  // Instantly unlock viewport
+  try {
+    await rawVideo.play();
+  } catch (e) {}
 
-    const vw = rawVideo.videoWidth || 1280;
-    const vh = rawVideo.videoHeight || 720;
+  steadyCanvas.width = rawVideo.videoWidth || 1280;
+  steadyCanvas.height = rawVideo.videoHeight || 720;
 
-    steadyCanvas.width = vw;
-    steadyCanvas.height = vh;
+  if (permOverlay) {
+    permOverlay.classList.add('hidden');
+  }
 
-    // Instantly hide overlay
-    if (permOverlay) {
-      permOverlay.classList.add('hidden');
-    }
-
-    try {
-      await applyHardwareEnhancements();
-    } catch (e) {}
-    updateGpuFilters();
-    showToast(`เปิดกล้องสำเร็จ (${vw}×${vh})`, 1800);
-  };
-}
+  try {
+    await applyHardwareEnhancements();
+  } catch (e) {}
+  updateGpuFilters();
+  showToast('เปิดกล้องสำเร็จ!');
+};
 
 // Fast 9-Block Visual Optical Flow Estimator (Optimized for Mobile)
 function estimateVisualMotion() {

@@ -1,10 +1,11 @@
-const CACHE_NAME = 'ultrasteady-v1';
+const CACHE_NAME = 'ultrasteady-v2.1';
 const ASSETS = [
   './',
   './index.html',
   './style.css',
-  './app.js',
-  './manifest.json'
+  './app.js?v=2.1',
+  './manifest.json',
+  './icon.svg'
 ];
 
 self.addEventListener('install', (event) => {

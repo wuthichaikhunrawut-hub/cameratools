@@ -21,15 +21,16 @@
     <!-- Main Fullscreen Stabilized Canvas -->
     <canvas id="steadyCanvas"></canvas>
 
-    <!-- Tap to Start Camera Overlay (Ensures 100% Browser Compatibility e.g. S26 Ultra, iOS) -->
+    <!-- Tap to Start Camera Overlay -->
     <div class="permission-overlay" id="permissionOverlay">
       <div class="permission-card">
         <div class="perm-icon">📷</div>
         <h2>UltraSteady Cam</h2>
         <p>แตะปุ่มด้านล่างเพื่ออนุญาตการใช้งานกล้องและเซนเซอร์กันสั่น</p>
-        <button class="perm-btn" id="btnStartCamera">
+        <button class="perm-btn" id="btnStartCamera" onclick="startCamera()">
           เปิดใช้งานกล้อง (Start Camera)
         </button>
+        <div id="permErrorMsg" style="color: #ef4444; font-size: 11px; margin-top: 6px; display: none;"></div>
       </div>
     </div>
 
@@ -142,6 +143,6 @@
     <div class="toast hidden" id="toastMsg"></div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=2.1"></script>
 </body>
 </html>
