@@ -60,11 +60,22 @@
       <span id="recTimerText">00:00</span>
     </div>
 
-    <!-- Clean Floating Zoom Pills -->
-    <div class="camera-zoom-bar">
-      <button class="zoom-chip active" data-zoom="1.0">1x</button>
-      <button class="zoom-chip" data-zoom="2.0">2x</button>
-      <button class="zoom-chip" data-zoom="3.0">3x</button>
+    <!-- Clean Floating Zoom & Axis Lock Bar -->
+    <div class="camera-floating-controls">
+      <!-- Axis Lock Pills -->
+      <div class="axis-lock-bar">
+        <button class="axis-btn active" data-axis="all" title="ล็อกทุกแกน (All-Lock)">🔒 ALL</button>
+        <button class="axis-btn" data-axis="pan" title="ล็อกขึ้น-ลง แพนซ้ายขวาอิสระ">↔️ แพน</button>
+        <button class="axis-btn" data-axis="tilt" title="ล็อกซ้าย-ขวา ก้มเงยอิสระ">↕️ ก้มเงย</button>
+        <button class="axis-btn" data-axis="free" title="อิสระทุกแกน">🔓 ฟรี</button>
+      </div>
+
+      <!-- Zoom Pills -->
+      <div class="camera-zoom-bar">
+        <button class="zoom-chip active" data-zoom="1.0">1x</button>
+        <button class="zoom-chip" data-zoom="2.0">2x</button>
+        <button class="zoom-chip" data-zoom="3.0">3x</button>
+      </div>
     </div>
 
     <!-- Clean Native Bottom Controls -->

@@ -177,20 +177,56 @@ body, html {
   cursor: pointer;
 }
 
-/* Floating Clean Zoom Chips */
-.camera-zoom-bar {
+/* Floating Floating Controls (Axis Lock + Zoom) */
+.camera-floating-controls {
   position: absolute;
-  bottom: 118px;
+  bottom: 110px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 8px;
-  background: rgba(0, 0, 0, 0.5);
+  z-index: 20;
+}
+
+.axis-lock-bar {
+  display: flex;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(12px);
-  padding: 4px 8px;
+  padding: 3px 6px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.15);
-  z-index: 20;
+}
+
+.axis-btn {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.65);
+  border: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.axis-btn.active {
+  background: #3b82f6;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+}
+
+/* Floating Clean Zoom Chips */
+.camera-zoom-bar {
+  display: flex;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(12px);
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .zoom-chip {

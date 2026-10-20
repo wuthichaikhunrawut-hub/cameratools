@@ -35,6 +35,7 @@ const state = {
   smoothness: 0.85,
   cropPercent: 0.32,
   useHorizonLock: true,
+  axisLockMode: 'all', // 'all', 'pan', 'tilt', 'free'
   targetResHeight: 720,
   videoBitrate: 8000000,
 
@@ -255,13 +256,27 @@ function renderLoop() {
   if (Math.abs(state.smoothRollRad) < 0.008) state.smoothRollRad = 0;
   const activeRoll = (state.enabled && state.useHorizonLock) ? -state.smoothRollRad : 0;
 
-  // Render to canvas
+  // Render to canvas with Axis Lock filtering
   ctx.save();
-  const shiftPxX = state.smoothOffsetX * cw;
-  const shiftPxY = state.smoothOffsetY * ch;
+  let shiftPxX = state.smoothOffsetX * cw;
+  let shiftPxY = state.smoothOffsetY * ch;
+
+  // Apply Axis Locking Mode:
+  if (state.axisLockMode === 'pan') {
+    // Lock vertical tilt (Y locked), allow horizontal pan (X free)
+    shiftPxX = 0; // Don't resist horizontal pan!
+  } else if (state.axisLockMode === 'tilt') {
+    // Lock horizontal pan (X locked), allow vertical tilt (Y free)
+    shiftPxY = 0; // Don't resist vertical tilt!
+  } else if (state.axisLockMode === 'free') {
+    // Free follow: no displacement lock
+    shiftPxX = 0;
+    shiftPxY = 0;
+  }
+  // 'all' keeps both shiftPxX and shiftPxY locked
 
   ctx.translate(cw / 2 + shiftPxX, ch / 2 + shiftPxY);
-  if (activeRoll !== 0) {
+  if (activeRoll !== 0 && state.axisLockMode !== 'free') {
     ctx.rotate(activeRoll);
   }
 
@@ -398,6 +413,23 @@ function takeSnapshot() {
 // 6. UI Initializer
 function initUI() {
   initWorker();
+
+  // Axis Lock Buttons
+  document.querySelectorAll('.axis-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.axis-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.axisLockMode = btn.dataset.axis || 'all';
+
+      const names = {
+        all: '🔒 ล็อกทุกแกน (All-Lock)',
+        pan: '↔️ ล็อกขึ้นลง (แพนแนวนอนอิสระ)',
+        tilt: '↕️ ล็อกซ้ายขวา (ก้มเงยอิสระ)',
+        free: '🔓 โหมดอิสระ'
+      };
+      showToast(names[state.axisLockMode], 1400);
+    });
+  });
 
   // Zoom Buttons
   document.querySelectorAll('.zoom-chip').forEach((btn) => {
