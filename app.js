@@ -232,12 +232,17 @@ function renderLoop() {
     }, [grayBuffer.buffer]);
   }
 
-  // Smooth interpolation of worker offset
+  // Smooth interpolation of worker offset (responsive, no slow drag)
   if (state.enabled) {
-    state.smoothOffsetX = state.smoothOffsetX * 0.88 + state.workerOffsetX * 0.12;
-    state.smoothOffsetY = state.smoothOffsetY * 0.88 + state.workerOffsetY * 0.12;
+    // If worker signaled pan reset, snap immediately
+    if (state.workerOffsetX === 0 && state.workerOffsetY === 0) {
+      state.smoothOffsetX *= 0.5;
+      state.smoothOffsetY *= 0.5;
+    } else {
+      state.smoothOffsetX = state.smoothOffsetX * 0.70 + state.workerOffsetX * 0.30;
+      state.smoothOffsetY = state.smoothOffsetY * 0.70 + state.workerOffsetY * 0.30;
+    }
 
-    // Decay to center if worker offset is near zero
     if (Math.abs(state.smoothOffsetX) < 0.001) state.smoothOffsetX = 0;
     if (Math.abs(state.smoothOffsetY) < 0.001) state.smoothOffsetY = 0;
   } else {

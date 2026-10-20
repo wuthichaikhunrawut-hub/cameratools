@@ -76,14 +76,32 @@ self.onmessage = function (e) {
     const filteredDx = Math.abs(medianDx) > deadzone ? medianDx : 0;
     const filteredDy = Math.abs(medianDy) > deadzone ? medianDy : 0;
 
+    // Intelligent Pan Detection: If user turns camera deliberately, don't drag!
+    const panMagnitude = Math.hypot(filteredDx, filteredDy);
+    if (panMagnitude > 0.04) {
+      // Rapid pan detected: instantly flush camera trajectory so it snaps to hand
+      camX = 0;
+      camY = 0;
+      smoothX = 0;
+      smoothY = 0;
+      self.postMessage({
+        type: 'MOTION_RESULT',
+        dx: 0,
+        dy: 0,
+        offsetX: 0,
+        offsetY: 0
+      });
+      return;
+    }
+
     camX += filteredDx;
     camY += filteredDy;
 
     // Strong auto-centering spring so camera NEVER drifts or floats away
-    camX *= 0.92;
-    camY *= 0.92;
+    camX *= 0.82; // Faster snap back
+    camY *= 0.82;
 
-    const alpha = smoothness || 0.82;
+    const alpha = smoothness || 0.72; // Snappier smoothing
     smoothX = smoothX * alpha + camX * (1 - alpha);
     smoothY = smoothY * alpha + camY * (1 - alpha);
 
