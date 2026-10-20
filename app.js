@@ -51,19 +51,20 @@ let currentStream = null;
 let facingMode = 'environment';
 let torchOn = false;
 let showPip = false;
+let flowFrameSkip = 0; // Skip frames to keep CPU cool
 
 // Stabilization State
 const state = {
   enabled: true,
-  smoothness: 0.88,      // 0.50 to 0.97
-  cropPercent: 0.28,     // 0.05 to 0.42
+  smoothness: 0.85,
+  cropPercent: 0.22,
   useOpticalFlow: true,
   useHorizonLock: true,
-  sharpness: 45,         // 0 to 100
-  clarity: 18,           // 0 to 60
-  targetResHeight: 1440,
-  videoBitrate: 20000000,
-  antiBlurShutter: true,
+  sharpness: 30,
+  clarity: 15,
+  targetResHeight: 720,  // Default to rock-solid 720p for Snapdragon 680
+  videoBitrate: 8000000, // 8 Mbps is optimal and lightweight
+  antiBlurShutter: false,
 
   // Cumulative camera motion & smoothed virtual trajectory (in normalized -1..1 space)
   camX: 0,
@@ -77,7 +78,9 @@ const state = {
   rawRollRad: 0,
   smoothRollRad: 0,
   accelShockX: 0,
-  accelShockY: 0
+  accelShockY: 0,
+  lastFlowDx: 0,
+  lastFlowDy: 0
 };
 
 // Recording State
@@ -101,44 +104,15 @@ function showToast(text, duration = 2600) {
   }, duration);
 }
 
-  // Update GPU Convolution Matrix for Real-time Hardware Sharpening
+  // Update GPU Light Filters (No heavy SVG CPU overhead)
 function updateGpuFilters() {
-  const s = state.sharpness / 100; // 0.0 to 1.0
-  if (s <= 0.01 && state.clarity <= 1 && !state.antiBlurShutter) {
-    state.activeFilter = 'none';
-    steadyCanvas.style.filter = 'none';
-    return;
-  }
+  const contrast = 100 + Math.round(state.clarity * 0.35);
+  const saturate = 100 + Math.round(state.clarity * 0.20);
+  const brightness = 100;
 
-  // 3x3 Unsharp Convolution Kernel:
-  // [  0,   -k,    0 ]
-  // [ -k, 1+4k,   -k ]
-  // [  0,   -k,    0 ]
-  const k = +(s * 1.35).toFixed(3);
-  const center = +(1 + 4 * k).toFixed(3);
-  const kernel = `0 ${-k} 0 ${-k} ${center} ${-k} 0 ${-k} 0`;
-  sharpenMatrix.setAttribute('kernelMatrix', kernel);
-
-  const contrast = 100 + Math.round(state.clarity * 0.45);
-  const saturate = 100 + Math.round(state.clarity * 0.30);
-  // Anti-blur slightly darkens hardware exposure for faster shutter, so we lift display brightness slightly
-  const brightness = state.antiBlurShutter ? 105 : 100;
-
-  const filterParts = [];
-  if (s > 0.01) {
-    filterParts.push('url(#gpuSharpen)');
-  }
-  filterParts.push(`contrast(${contrast}%) saturate(${saturate}%) brightness(${brightness}%)`);
-  const filterStr = filterParts.join(' ');
-
-  // Bake filter directly into Canvas 2D Context so recorded MP4/WebM & Photos also get sharpened!
-  if ('filter' in ctx) {
-    state.activeFilter = filterStr;
-    steadyCanvas.style.filter = 'none';
-  } else {
-    state.activeFilter = 'none';
-    steadyCanvas.style.filter = filterStr;
-  }
+  // Use pure hardware CSS styling which runs 100% on GPU without freezing canvas draw
+  steadyCanvas.style.filter = `contrast(${contrast}%) saturate(${saturate}%) brightness(${brightness}%)`;
+  state.activeFilter = 'none';
 }
 
 // Apply Hardware Camera Constraints (Autofocus, Anti-Motion-Blur Exposure)
@@ -216,9 +190,15 @@ async function startCamera() {
   }
 }
 
-// Fast 9-Block Visual Optical Flow Estimator (Runs in <1ms on Snapdragon 680)
+// Fast 9-Block Visual Optical Flow Estimator (Optimized for Mobile)
 function estimateVisualMotion() {
   if (!rawVideo.videoWidth) return { dx: 0, dy: 0 };
+
+  // Only calculate every 2nd frame to save 50% CPU
+  flowFrameSkip++;
+  if (flowFrameSkip % 2 !== 0 && state.lastFlowDx !== undefined) {
+    return { dx: state.lastFlowDx, dy: state.lastFlowDy };
+  }
 
   flowCtx.drawImage(rawVideo, 0, 0, FLOW_SIZE, FLOW_SIZE);
   const imgData = flowCtx.getImageData(0, 0, FLOW_SIZE, FLOW_SIZE).data;
@@ -235,53 +215,56 @@ function estimateVisualMotion() {
     return { dx: 0, dy: 0 };
   }
 
-  // 9 anchor blocks (3x3 grid inside central 64x64 region)
-  const blockCenters = [26, 48, 70];
-  const blockHalf = 6; // 12x12 patch
-  const searchRadius = 6; // +-6 pixels search window
+  // 5 anchor blocks (Cross pattern for 50% faster calculation)
+  const blockPoints = [
+    [48, 48], // center
+    [28, 48], // left
+    [68, 48], // right
+    [48, 28], // top
+    [48, 68]  // bottom
+  ];
+  const blockHalf = 5;
+  const searchRadius = 5;
 
   const dxs = [];
   const dys = [];
 
-  for (let by of blockCenters) {
-    for (let bx of blockCenters) {
-      let bestSad = Infinity;
-      let bestDx = 0;
-      let bestDy = 0;
+  for (let [bx, by] of blockPoints) {
+    let bestSad = Infinity;
+    let bestDx = 0;
+    let bestDy = 0;
 
-      for (let sy = -searchRadius; sy <= searchRadius; sy++) {
-        for (let sx = -searchRadius; sx <= searchRadius; sx++) {
-          let sad = 0;
-          // Sample every 2nd pixel for 4x speed boost
-          for (let py = -blockHalf; py < blockHalf; py += 2) {
-            const r1 = (by + py) * FLOW_SIZE + bx;
-            const r2 = (by + py + sy) * FLOW_SIZE + (bx + sx);
-            for (let px = -blockHalf; px < blockHalf; px += 2) {
-              sad += Math.abs(currLuma[r2 + px] - prevLuma[r1 + px]);
-            }
-          }
-          // Slight bias toward (0,0) to prevent drift on flat walls
-          sad += (Math.abs(sx) + Math.abs(sy)) * 3;
-          if (sad < bestSad) {
-            bestSad = sad;
-            bestDx = sx;
-            bestDy = sy;
+    for (let sy = -searchRadius; sy <= searchRadius; sy += 2) {
+      for (let sx = -searchRadius; sx <= searchRadius; sx += 2) {
+        let sad = 0;
+        for (let py = -blockHalf; py < blockHalf; py += 2) {
+          const r1 = (by + py) * FLOW_SIZE + bx;
+          const r2 = (by + py + sy) * FLOW_SIZE + (bx + sx);
+          for (let px = -blockHalf; px < blockHalf; px += 2) {
+            sad += Math.abs(currLuma[r2 + px] - prevLuma[r1 + px]);
           }
         }
+        if (sad < bestSad) {
+          bestSad = sad;
+          bestDx = sx;
+          bestDy = sy;
+        }
       }
-      dxs.push(bestDx);
-      dys.push(bestDy);
     }
+    dxs.push(bestDx);
+    dys.push(bestDy);
   }
 
   prevLuma = currLuma;
 
-  // Median filter across the 9 blocks to reject moving subjects in the scene
+  // Median
   dxs.sort((a, b) => a - b);
   dys.sort((a, b) => a - b);
-  const medianDx = dxs[4] / FLOW_SIZE; // Normalized shift (-1..1)
-  const medianDy = dys[4] / FLOW_SIZE;
+  const medianDx = dxs[2] / FLOW_SIZE;
+  const medianDy = dys[2] / FLOW_SIZE;
 
+  state.lastFlowDx = medianDx;
+  state.lastFlowDy = medianDy;
   return { dx: medianDx, dy: medianDy };
 }
 
