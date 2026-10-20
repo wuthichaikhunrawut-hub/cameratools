@@ -1,9 +1,19 @@
-// UltraSteady Pro Cam - Clean, Solid & Zero-Lag Core Engine
+// UltraSteady Pro Cam V3 - Web Worker + Computer Vision Engine
 const rawVideo = document.getElementById('rawVideo');
 const steadyCanvas = document.getElementById('steadyCanvas');
 const ctx = steadyCanvas.getContext('2d', { alpha: false });
 const horizonLine = document.querySelector('.horizon-line');
 const toastMsg = document.getElementById('toastMsg');
+
+// Offscreen buffer for Web Worker
+const WORKER_SIZE = 80;
+const offCanvas = document.createElement('canvas');
+offCanvas.width = WORKER_SIZE;
+offCanvas.height = WORKER_SIZE;
+const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
+
+let stabilizerWorker = null;
+let isWorkerBusy = false;
 
 let currentStream = null;
 let facingMode = 'environment';
@@ -22,27 +32,38 @@ let recTimerInterval = null;
 // Stabilization State
 const state = {
   enabled: true,
-  smoothness: 0.82,       // Stronger damping
-  cropPercent: 0.35,      // Big 35% margin for Super Steady action
+  smoothness: 0.85,
+  cropPercent: 0.32,
   useHorizonLock: true,
   targetResHeight: 720,
   videoBitrate: 8000000,
 
-  // Gyroscope Angles
-  gyroPitch: 0,
-  gyroRoll: 0,
-  smoothGyroPitch: 0,
-  smoothGyroRoll: 0,
+  // Worker Offsets
+  workerOffsetX: 0,
+  workerOffsetY: 0,
+  smoothOffsetX: 0,
+  smoothOffsetY: 0,
 
-  // Displacement
-  velX: 0,
-  velY: 0,
-  offsetX: 0,
-  offsetY: 0,
-
+  // Gyro / Horizon
   rawRollRad: 0,
   smoothRollRad: 0
 };
+
+// Initialize Web Worker
+function initWorker() {
+  try {
+    stabilizerWorker = new Worker('./stabilizer.worker.js');
+    stabilizerWorker.onmessage = function (e) {
+      isWorkerBusy = false;
+      if (e.data.type === 'MOTION_RESULT') {
+        state.workerOffsetX = e.data.offsetX;
+        state.workerOffsetY = e.data.offsetY;
+      }
+    };
+  } catch (err) {
+    console.warn('Web Worker fallback to local mode:', err);
+  }
+}
 
 // Toast helper
 function showToast(text, duration = 2000) {
@@ -55,7 +76,7 @@ function showToast(text, duration = 2000) {
   }, duration);
 }
 
-// 1. Robust Start Camera (Globally available on window)
+// 1. Robust Start Camera with MediaDevices API
 window.startCamera = async function () {
   const permOverlay = document.getElementById('permissionOverlay');
   const btnStartCamera = document.getElementById('btnStartCamera');
@@ -92,34 +113,33 @@ window.startCamera = async function () {
   let stream = null;
   let lastError = null;
 
-  // Fallback 1: Ideal rear camera
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } },
+  // MediaDevices advanced constraints
+  const configs = [
+    {
+      video: {
+        facingMode: { ideal: facingMode },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 60, min: 30 }
+      },
       audio: false
-    });
-  } catch (e1) {
-    lastError = e1;
-    // Fallback 2: Any back camera
+    },
+    { video: { facingMode: facingMode }, audio: false },
+    { video: true, audio: false }
+  ];
+
+  for (const cfg of configs) {
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facingMode },
-        audio: false
-      });
-    } catch (e2) {
-      lastError = e2;
-      // Fallback 3: Standard camera
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      } catch (e3) {
-        lastError = e3;
-      }
+      stream = await navigator.mediaDevices.getUserMedia(cfg);
+      if (stream) break;
+    } catch (e) {
+      lastError = e;
     }
   }
 
   if (!stream) {
     const msg = (lastError && lastError.name === 'NotAllowedError')
-      ? '⚠️ คุณปฏิเสธสิทธิ์การใช้กล้อง: กรุณาแตะที่ไอคอนกุญแจ 🔒 ที่แถบ URL ด้านบนเพื่อกดอนุญาต'
+      ? '⚠️ กรุณาแตะไอคอนกุญแจ 🔒 ที่แถบ URL ด้านบนเพื่อกดอนุญาตให้ใช้กล้อง'
       : '⚠️ ไม่สามารถเปิดกล้องได้: ' + (lastError ? lastError.message : 'กรุณาตรวจสอบสิทธิ์กล้อง');
 
     if (permErrorMsg) {
@@ -149,76 +169,39 @@ window.startCamera = async function () {
     permOverlay.classList.add('hidden');
   }
 
-  // Force Continuous Autofocus
+  // Force Hardware Continuous Focus
   const track = stream.getVideoTracks()[0];
   if (track && track.applyConstraints) {
     try {
       await track.applyConstraints({
-        advanced: [{ focusMode: 'continuous', whiteBalanceMode: 'continuous' }]
+        advanced: [
+          { focusMode: 'continuous' },
+          { whiteBalanceMode: 'continuous' }
+        ]
       });
     } catch (e) {}
   }
 
-  showToast(`เปิดกล้องสำเร็จ (${vw}×${vh})`);
+  showToast(`เปิดกล้อง V3 สำเร็จ (${vw}×${vh})`);
 };
 
-// Listen to Gyroscope Orientation for Smooth Camera Pitch & Roll
-window.addEventListener('deviceorientation', (e) => {
-  if (!state.enabled) return;
-  if (e.beta !== null && e.gamma !== null) {
-    const p = (e.beta - 60) * (Math.PI / 180);
-    const r = e.gamma * (Math.PI / 180);
-
-    // Deadzone filter for Gyro: Ignore micro sensor jitter (< 0.015 rad ~ 0.8 deg)
-    if (Math.abs(p - state.gyroPitch) > 0.015) {
-      state.gyroPitch = p;
-    }
-    if (Math.abs(r - state.gyroRoll) > 0.015) {
-      state.gyroRoll = r;
-    }
-  }
-}, { passive: true });
-
-// 2. Accelerometer Shake & Horizon Lock Sensor
+// 2. Horizon Angle Sensor (Filtered)
 window.addEventListener('devicemotion', (e) => {
   if (!state.enabled) return;
-
   const ag = e.accelerationIncludingGravity;
-  const lin = e.acceleration;
-
   if (ag && ag.x !== null && ag.y !== null) {
     const roll = Math.atan2(ag.x, ag.y);
     if (Math.abs(roll) < 0.75) {
-      // Deadzone for horizon roll jitter
-      if (Math.abs(roll - state.rawRollRad) > 0.01) {
+      if (Math.abs(roll - state.rawRollRad) > 0.012) {
         state.rawRollRad = roll;
       }
     }
   }
-
-  if (lin && lin.x !== null && lin.y !== null) {
-    const ax = lin.x || 0;
-    const ay = lin.y || 0;
-    const mag = Math.hypot(ax, ay);
-
-    // Deadzone: Ignore micro sensor noise when holding still (< 0.4 m/s^2)
-    if (mag < 0.4) {
-      return;
-    }
-
-    if (mag > 12) {
-      state.velX *= 0.2;
-      state.velY *= 0.2;
-      state.offsetX *= 0.3;
-      state.offsetY *= 0.3;
-    } else {
-      state.velX += ax * 0.006;
-      state.velY += -ay * 0.006;
-    }
-  }
 }, { passive: true });
 
-// 3. Stabilization Render Loop (60 FPS)
+// 3. Stabilization Render Loop (60 FPS on Main Thread)
+let frameCounter = 0;
+
 function renderLoop() {
   requestAnimationFrame(renderLoop);
 
@@ -227,45 +210,46 @@ function renderLoop() {
   const cw = steadyCanvas.width;
   const ch = steadyCanvas.height;
 
-  // 1. Gyro low-pass smoothing (gentle response)
-  state.smoothGyroPitch = state.smoothGyroPitch * 0.94 + state.gyroPitch * 0.06;
-  state.smoothGyroRoll = state.smoothGyroRoll * 0.94 + state.gyroRoll * 0.06;
+  // Send frame to Web Worker (every 2nd frame, non-blocking)
+  frameCounter++;
+  if (state.enabled && stabilizerWorker && !isWorkerBusy && frameCounter % 2 === 0) {
+    offCtx.drawImage(rawVideo, 0, 0, WORKER_SIZE, WORKER_SIZE);
+    const imgData = offCtx.getImageData(0, 0, WORKER_SIZE, WORKER_SIZE);
+    const grayBuffer = new Uint8Array(WORKER_SIZE * WORKER_SIZE);
 
-  // Angular displacement in pixels with deadband
-  let gyroShiftY = (state.smoothGyroPitch - state.gyroPitch) * ch * 0.45;
-  let gyroShiftX = (state.smoothGyroRoll - state.gyroRoll) * cw * 0.45;
+    for (let i = 0, j = 0; i < imgData.data.length; i += 4, j++) {
+      grayBuffer[j] = (imgData.data[i] * 2 + imgData.data[i + 1] * 5 + imgData.data[i + 2]) >> 3;
+    }
 
-  if (Math.abs(gyroShiftX) < 1.5) gyroShiftX = 0;
-  if (Math.abs(gyroShiftY) < 1.5) gyroShiftY = 0;
-
-  if (state.enabled) {
-    state.velX -= state.offsetX * 0.18;
-    state.velY -= state.offsetY * 0.18;
-
-    state.velX *= state.smoothness;
-    state.velY *= state.smoothness;
-
-    state.offsetX += state.velX;
-    state.offsetY += state.velY;
-
-    // Zero out sub-pixel jitter
-    if (Math.abs(state.offsetX) < 1.0) state.offsetX = 0;
-    if (Math.abs(state.offsetY) < 1.0) state.offsetY = 0;
-
-    const maxShiftX = cw * (state.cropPercent * 0.45);
-    const maxShiftY = ch * (state.cropPercent * 0.45);
-    state.offsetX = Math.max(-maxShiftX, Math.min(maxShiftX, state.offsetX + gyroShiftX));
-    state.offsetY = Math.max(-maxShiftY, Math.min(maxShiftY, state.offsetY + gyroShiftY));
-  } else {
-    state.offsetX = 0;
-    state.offsetY = 0;
+    isWorkerBusy = true;
+    stabilizerWorker.postMessage({
+      type: 'PROCESS_FRAME',
+      width: WORKER_SIZE,
+      height: WORKER_SIZE,
+      smoothness: state.smoothness,
+      buffer: grayBuffer.buffer
+    }, [grayBuffer.buffer]);
   }
 
-  state.smoothRollRad = state.smoothRollRad * 0.85 + state.rawRollRad * 0.15;
+  // Smooth interpolation of worker offset
+  if (state.enabled) {
+    state.smoothOffsetX = state.smoothOffsetX * 0.8 + state.workerOffsetX * 0.2;
+    state.smoothOffsetY = state.smoothOffsetY * 0.8 + state.workerOffsetY * 0.2;
+  } else {
+    state.smoothOffsetX = 0;
+    state.smoothOffsetY = 0;
+  }
+
+  // Horizon lock smoothing
+  state.smoothRollRad = state.smoothRollRad * 0.90 + state.rawRollRad * 0.10;
   const activeRoll = (state.enabled && state.useHorizonLock) ? -state.smoothRollRad : 0;
 
+  // Render to canvas
   ctx.save();
-  ctx.translate(cw / 2 - state.offsetX, ch / 2 - state.offsetY);
+  const shiftPxX = state.smoothOffsetX * cw;
+  const shiftPxY = state.smoothOffsetY * ch;
+
+  ctx.translate(cw / 2 + shiftPxX, ch / 2 + shiftPxY);
   if (activeRoll !== 0) {
     ctx.rotate(activeRoll);
   }
@@ -277,6 +261,7 @@ function renderLoop() {
   ctx.drawImage(rawVideo, -drawW / 2, -drawH / 2, drawW, drawH);
   ctx.restore();
 
+  // Horizon line
   if (horizonLine) {
     const deg = (state.smoothRollRad * (180 / Math.PI)).toFixed(1);
     horizonLine.style.transform = `rotate(${-deg}deg)`;
@@ -338,7 +323,7 @@ function toggleRecording() {
       }
 
       const url = URL.createObjectURL(blob);
-      const filename = `UltraSteady_${Date.now()}.${ext}`;
+      const filename = `UltraSteady_V3_${Date.now()}.${ext}`;
 
       if (modalPreviewVideo) modalPreviewVideo.src = url;
       if (btnDownloadFile) {
@@ -371,7 +356,7 @@ function toggleRecording() {
       const ss = String(sec % 60).padStart(2, '0');
       if (recTimerText) recTimerText.textContent = `${mm}:${ss}`;
     }, 500);
-    showToast('กำลังบันทึกวิดีโอกันสั่น...');
+    showToast('กำลังบันทึกวิดีโอกันสั่น V3...');
   } else {
     try {
       mediaRecorder.stop();
@@ -390,7 +375,7 @@ function takeSnapshot() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `UltraSteady_${Date.now()}.jpg`;
+    a.download = `UltraSteady_V3_${Date.now()}.jpg`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -401,6 +386,8 @@ function takeSnapshot() {
 
 // 6. UI Initializer
 function initUI() {
+  initWorker();
+
   // Zoom Buttons
   document.querySelectorAll('.zoom-chip').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -443,7 +430,6 @@ function initUI() {
   const focusBox = document.getElementById('focusBox');
   if (cameraRoot && focusBox) {
     cameraRoot.addEventListener('click', async (e) => {
-      // Ignore if clicking buttons or overlays
       if (e.target.closest('button') || e.target.closest('.settings-modal-overlay') || e.target.closest('.permission-overlay')) return;
 
       const rect = cameraRoot.getBoundingClientRect();
@@ -461,14 +447,12 @@ function initUI() {
         setTimeout(() => focusBox.classList.add('hidden'), 200);
       }, 1200);
 
-      // Re-trigger Continuous Focus via Hardware Track Constraints
+      // Trigger Continuous Autofocus Re-engage
       if (currentStream) {
         const track = currentStream.getVideoTracks()[0];
         if (track && track.applyConstraints) {
           try {
-            await track.applyConstraints({
-              advanced: [{ focusMode: 'continuous' }]
-            });
+            await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
           } catch (err) {}
         }
       }
@@ -485,12 +469,15 @@ function initUI() {
   const btnRecenter = document.getElementById('btnRecenter');
   if (btnRecenter) {
     btnRecenter.addEventListener('click', () => {
-      state.offsetX = 0;
-      state.offsetY = 0;
-      state.velX = 0;
-      state.velY = 0;
+      if (stabilizerWorker) {
+        stabilizerWorker.postMessage({ type: 'RESET' });
+      }
+      state.workerOffsetX = 0;
+      state.workerOffsetY = 0;
+      state.smoothOffsetX = 0;
+      state.smoothOffsetY = 0;
       state.smoothRollRad = 0;
-      showToast('🎯 รีเซ็ตระนาบศูนย์กลาง');
+      showToast('🎯 รีเซ็ตศูนย์กลางเรียบร้อย');
     });
   }
 
@@ -541,18 +528,18 @@ function initUI() {
 
       if (preset === 'standard') {
         state.enabled = true;
-        state.cropPercent = 0.12;
-        state.smoothness = 0.65;
+        state.cropPercent = 0.15;
+        state.smoothness = 0.75;
         if (hudModeBadge) hudModeBadge.textContent = 'STANDARD';
       } else if (preset === 'ultra') {
         state.enabled = true;
-        state.cropPercent = 0.20;
-        state.smoothness = 0.72;
+        state.cropPercent = 0.32;
+        state.smoothness = 0.85;
         if (hudModeBadge) hudModeBadge.textContent = 'ULTRA STEADY';
       } else if (preset === 'gimbal') {
         state.enabled = true;
-        state.cropPercent = 0.32;
-        state.smoothness = 0.82;
+        state.cropPercent = 0.42;
+        state.smoothness = 0.92;
         if (hudModeBadge) hudModeBadge.textContent = 'GIMBAL LOCK';
       } else if (preset === 'off') {
         state.enabled = false;

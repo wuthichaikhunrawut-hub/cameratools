@@ -1,9 +1,10 @@
-const CACHE_NAME = 'ultrasteady-v2.1';
+const CACHE_NAME = 'ultrasteady-v3.0';
 const ASSETS = [
   './',
   './index.html',
   './style.css',
-  './app.js?v=2.1',
+  './app.js',
+  './stabilizer.worker.js',
   './manifest.json',
   './icon.svg'
 ];
