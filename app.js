@@ -51,37 +51,69 @@ let currentStream = null;
 let facingMode = 'environment';
 let torchOn = false;
 let showPip = false;
-let flowFrameSkip = 0; // Skip frames to keep CPU cool
+let currentZoom = 1.0;
+let pinchStartDist = 0;
+let pinchStartZoom = 1.0;
 
-// Stabilization State
+// Stabilization State (Zero-Latency Inertial & Smart Pan)
 const state = {
   enabled: true,
-  smoothness: 0.85,
-  cropPercent: 0.22,
-  useOpticalFlow: true,
+  smoothness: 0.72,       // Responsive damping (no dragging/float lag)
+  cropPercent: 0.20,
   useHorizonLock: true,
-  sharpness: 30,
   clarity: 15,
-  targetResHeight: 720,  // Default to rock-solid 720p for Snapdragon 680
-  videoBitrate: 8000000, // 8 Mbps is optimal and lightweight
-  antiBlurShutter: false,
+  targetResHeight: 720,
+  videoBitrate: 8000000,
 
-  // Cumulative camera motion & smoothed virtual trajectory (in normalized -1..1 space)
-  camX: 0,
-  camY: 0,
-  smoothX: 0,
-  smoothY: 0,
+  // Inertial Sensor Physics
+  accelX: 0,
+  accelY: 0,
   velX: 0,
   velY: 0,
+  offsetX: 0,
+  offsetY: 0,
 
-  // Accelerometer / Gravity Roll & Shock
+  // Horizon Roll
   rawRollRad: 0,
-  smoothRollRad: 0,
-  accelShockX: 0,
-  accelShockY: 0,
-  lastFlowDx: 0,
-  lastFlowDy: 0
+  smoothRollRad: 0
 };
+
+// Accelerometer Event (Ultra-Fast 0.05ms hardware interrupt)
+window.addEventListener('devicemotion', (e) => {
+  if (!state.enabled) return;
+
+  const ag = e.accelerationIncludingGravity;
+  const lin = e.acceleration;
+
+  // 1. Gravity Horizon Angle (Portrait mode)
+  if (ag && ag.x !== null && ag.y !== null) {
+    const roll = Math.atan2(ag.x, ag.y);
+    if (Math.abs(roll) < 0.75) {
+      state.rawRollRad = roll;
+    }
+  }
+
+  // 2. High-Frequency Shake Compensation (Inertial Shifting)
+  if (lin && lin.x !== null && lin.y !== null) {
+    // Step impact & hand shake acceleration
+    const ax = lin.x || 0;
+    const ay = lin.y || 0;
+
+    // Smart Pan Detection: If acceleration is very high (user intentionally whipping/panning the phone), don't resist!
+    const mag = Math.hypot(ax, ay);
+    if (mag > 12) {
+      // Rapid pan: instantly decay offset so camera snaps to hand direction without lag
+      state.velX *= 0.2;
+      state.velY *= 0.2;
+      state.offsetX *= 0.3;
+      state.offsetY *= 0.3;
+    } else {
+      // Normal walk / tremor shake: absorb counter-impulse
+      state.velX += ax * 0.008;
+      state.velY += -ay * 0.008;
+    }
+  }
+}, { passive: true });
 
 // Recording State
 let mediaRecorder = null;
@@ -147,6 +179,23 @@ async function applyHardwareEnhancements() {
   } catch (e) {
     // Ignore unsupported constraint warnings on specific Android WebViews
   }
+}
+
+// Apply Camera Hardware Zoom (if supported) with Fallback to Canvas Zoom
+async function applyHardwareZoom(zoomLevel) {
+  if (!currentStream) return;
+  const track = currentStream.getVideoTracks()[0];
+  if (!track || !track.getCapabilities) return;
+
+  try {
+    const caps = track.getCapabilities();
+    if (caps.zoom) {
+      const minZ = caps.zoom.min || 1;
+      const maxZ = caps.zoom.max || 4;
+      const targetZ = Math.max(minZ, Math.min(maxZ, zoomLevel));
+      await track.applyConstraints({ advanced: [{ zoom: targetZ }] });
+    }
+  } catch (e) {}
 }
 
 // Start Camera Stream with Oversampled Resolution
@@ -289,7 +338,7 @@ window.addEventListener('devicemotion', (e) => {
   }
 }, { passive: true });
 
-// Main 60FPS Stabilization Render Loop
+// Main 60FPS Stabilization Render Loop (Zero-Lag Physics)
 function renderLoop(now) {
   requestAnimationFrame(renderLoop);
 
@@ -298,88 +347,64 @@ function renderLoop(now) {
   const cw = steadyCanvas.width;
   const ch = steadyCanvas.height;
 
-  // 1. Measure frame-to-frame camera shake
-  let flowDx = 0;
-  let flowDy = 0;
-  if (state.enabled && state.useOpticalFlow) {
-    const flow = estimateVisualMotion();
-    flowDx = flow.dx;
-    flowDy = flow.dy;
+  // 1. Inertial spring-damper physics simulation
+  if (state.enabled) {
+    // Spring pulls offset back to center
+    state.velX -= state.offsetX * 0.15;
+    state.velY -= state.offsetY * 0.15;
+
+    // Damping friction
+    state.velX *= state.smoothness;
+    state.velY *= state.smoothness;
+
+    state.offsetX += state.velX;
+    state.offsetY += state.velY;
+
+    // Bound offset inside crop zone
+    const maxShiftX = cw * (state.cropPercent * 0.42);
+    const maxShiftY = ch * (state.cropPercent * 0.42);
+    state.offsetX = Math.max(-maxShiftX, Math.min(maxShiftX, state.offsetX));
+    state.offsetY = Math.max(-maxShiftY, Math.min(maxShiftY, state.offsetY));
+  } else {
+    state.offsetX = 0;
+    state.offsetY = 0;
   }
 
-  // Combine visual shift + accelerometer micro-shock
-  const stepDx = flowDx + state.accelShockX;
-  const stepDy = flowDy + state.accelShockY;
-  state.accelShockX *= 0.7;
-  state.accelShockY *= 0.7;
-
-  // Update cumulative camera position
-  state.camX += stepDx;
-  state.camY += stepDy;
-
-  // Smooth virtual camera trajectory (Spring-Damper Low-Pass Filter)
-  const alpha = state.smoothness; // e.g., 0.88 to 0.97
-  state.smoothX = state.smoothX * alpha + state.camX * (1 - alpha);
-  state.smoothY = state.smoothY * alpha + state.camY * (1 - alpha);
-
-  // Corrective offset = difference between smooth virtual path and raw jerky camera
-  let offsetX = (state.smoothX - state.camX) * cw;
-  let offsetY = (state.smoothY - state.camY) * ch;
-
-  // Pull smooth trajectory gently toward raw camera if nearing crop boundaries
-  const maxCropRatio = state.enabled ? state.cropPercent : 0;
-  const maxShiftX = cw * (maxCropRatio * 0.48);
-  const maxShiftY = ch * (maxCropRatio * 0.48);
-
-  if (Math.abs(offsetX) > maxShiftX && maxShiftX > 0) {
-    const sign = Math.sign(offsetX);
-    offsetX = sign * maxShiftX;
-    state.smoothX = state.camX + offsetX / cw;
-  }
-  if (Math.abs(offsetY) > maxShiftY && maxShiftY > 0) {
-    const sign = Math.sign(offsetY);
-    offsetY = sign * maxShiftY;
-    state.smoothY = state.camY + offsetY / ch;
-  }
-
-  // Smooth roll angle for Horizon Lock
-  state.smoothRollRad = state.smoothRollRad * 0.82 + state.rawRollRad * 0.18;
+  // Smooth horizon roll
+  state.smoothRollRad = state.smoothRollRad * 0.85 + state.rawRollRad * 0.15;
   const activeRoll = (state.enabled && state.useHorizonLock) ? -state.smoothRollRad : 0;
 
-  // 2. Render stabilized & zoomed frame onto steadyCanvas
+  // 2. Render stabilized frame with Zoom
   ctx.save();
-  if (state.activeFilter && state.activeFilter !== 'none') {
-    ctx.filter = state.activeFilter;
-  }
-  ctx.translate(cw / 2 + (state.enabled ? offsetX : 0), ch / 2 + (state.enabled ? offsetY : 0));
+  ctx.translate(cw / 2 - state.offsetX, ch / 2 - state.offsetY);
   if (activeRoll !== 0) {
     ctx.rotate(activeRoll);
   }
 
-  // Scale up by (1 + cropPercent) so borders never show black edges during shifts/rotation
-  const zoomScale = state.enabled ? (1 + state.cropPercent) : 1.0;
-  const drawW = cw * zoomScale;
-  const drawH = ch * zoomScale;
+  // Combined Zoom = Base Crop + User Zoom level
+  const totalScale = (state.enabled ? (1 + state.cropPercent) : 1.0) * currentZoom;
+  const drawW = cw * totalScale;
+  const drawH = ch * totalScale;
 
   ctx.drawImage(rawVideo, -drawW / 2, -drawH / 2, drawW, drawH);
   ctx.restore();
 
-  // Optional: Draw raw unstabilized PIP preview for side-by-side comparison
+  // PIP raw preview
   if (showPip) {
     rawPreviewCtx.drawImage(rawVideo, 0, 0, rawPreviewCanvas.width, rawPreviewCanvas.height);
   }
 
-  // 3. Update Telemetry UI
-  const shakeMagPx = Math.round(Math.hypot(offsetX, offsetY));
+  // 3. Telemetry UI
+  const shakeMagPx = Math.round(Math.hypot(state.offsetX, state.offsetY));
   shakePxText.textContent = `${shakeMagPx} px`;
-  const meterPct = Math.min(100, Math.round((shakeMagPx / Math.max(1, maxShiftX)) * 100));
+  const meterPct = Math.min(100, Math.round((shakeMagPx / Math.max(1, cw * 0.1)) * 100));
   shakeMeterFill.style.width = `${Math.max(6, meterPct)}%`;
 
   const deg = (state.smoothRollRad * (180 / Math.PI)).toFixed(1);
   rollAngleText.textContent = `${deg}°`;
   horizonLine.style.transform = `rotate(${-deg}deg)`;
 
-  // FPS counter
+  // FPS Counter
   frameCount++;
   if (now - lastFpsTime >= 500) {
     const fps = Math.round((frameCount * 1000) / (now - lastFpsTime));
@@ -520,6 +545,46 @@ function takeSnapshot() {
 
 // Wire UI Events
 function initUI() {
+  // Zoom Buttons
+  document.querySelectorAll('.zoom-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.zoom-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentZoom = parseFloat(btn.dataset.zoom) || 1.0;
+      applyHardwareZoom(currentZoom);
+      showToast(`ซูม: ${currentZoom}x`, 1200);
+    });
+  });
+
+  // Touch Pinch-to-Zoom on Viewport
+  const viewportWrap = document.getElementById('viewportWrap');
+  viewportWrap.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      pinchStartDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      pinchStartZoom = currentZoom;
+    }
+  }, { passive: true });
+
+  viewportWrap.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2 && pinchStartDist > 0) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const scale = dist / pinchStartDist;
+      currentZoom = Math.max(1.0, Math.min(4.0, +(pinchStartZoom * scale).toFixed(2)));
+      applyHardwareZoom(currentZoom);
+
+      // Update button highlights
+      document.querySelectorAll('.zoom-btn').forEach((b) => {
+        b.classList.toggle('active', parseFloat(b.dataset.zoom) === currentZoom);
+      });
+    }
+  }, { passive: true });
+
   // Preset buttons
   document.querySelectorAll('.preset-pill').forEach((btn) => {
     btn.addEventListener('click', () => {

@@ -184,6 +184,37 @@ body, html {
   border: 2px solid var(--accent);
 }
 
+/* Quick Zoom Floating Pills */
+.zoom-pill-bar {
+  position: absolute;
+  bottom: 14px;
+  display: flex;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 4px 8px;
+  border-radius: 999px;
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border-subtle);
+  z-index: 20;
+}
+
+.zoom-btn {
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.zoom-btn.active {
+  background: var(--accent);
+  color: #032218;
+}
+
 /* PIP Preview */
 .pip-raw-box {
   position: absolute;
