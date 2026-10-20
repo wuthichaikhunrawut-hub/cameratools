@@ -21,6 +21,18 @@
     <!-- Main Fullscreen Stabilized Canvas -->
     <canvas id="steadyCanvas"></canvas>
 
+    <!-- Tap to Start Camera Overlay (Ensures 100% Browser Compatibility e.g. S26 Ultra, iOS) -->
+    <div class="permission-overlay" id="permissionOverlay">
+      <div class="permission-card">
+        <div class="perm-icon">📷</div>
+        <h2>UltraSteady Cam</h2>
+        <p>แตะปุ่มด้านล่างเพื่ออนุญาตการใช้งานกล้องและเซนเซอร์กันสั่น</p>
+        <button class="perm-btn" id="btnStartCamera">
+          เปิดใช้งานกล้อง (Start Camera)
+        </button>
+      </div>
+    </div>
+
     <!-- Subtle Horizon Guide Line -->
     <div class="horizon-guide" id="horizonGuide">
       <div class="horizon-line"></div>

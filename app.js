@@ -181,20 +181,23 @@ async function applyHardwareZoom(zoomLevel) {
 
 // Start Camera Stream with Oversampled Resolution
 async function startCamera() {
+  const permOverlay = document.getElementById('permissionOverlay');
+
   if (currentStream) {
     currentStream.getTracks().forEach((t) => t.stop());
   }
 
-  const targetH = state.targetResHeight;
+  const targetH = state.targetResHeight || 720;
   const targetW = Math.round((targetH * 16) / 9);
 
+  // Cross-device fallback constraints (Supports Samsung, iPhone, Vivo)
   const constraints = {
     audio: false,
     video: {
       facingMode: { ideal: facingMode },
-      width: { ideal: targetW },
-      height: { ideal: targetH },
-      frameRate: { ideal: 60, min: 30 }
+      width: { ideal: targetW, min: 640 },
+      height: { ideal: targetH, min: 480 },
+      frameRate: { ideal: 60, min: 24 }
     }
   };
 
@@ -206,17 +209,34 @@ async function startCamera() {
     const vw = rawVideo.videoWidth || 1280;
     const vh = rawVideo.videoHeight || 720;
 
-    // Set output canvas resolution high for crisp detail
     steadyCanvas.width = vw;
     steadyCanvas.height = vh;
 
-    hudResBadge.textContent = `${ vw }×${ vh }`;
+    // Hide permission overlay once camera is running
+    if (permOverlay) {
+      permOverlay.classList.add('hidden');
+    }
+
     await applyHardwareEnhancements();
     updateGpuFilters();
-    showToast(`เปิดกล้องสำเร็จ (${ vw }×${ vh })`);
+    showToast(`เปิดกล้องสำเร็จ (${vw}×${vh})`);
   } catch (err) {
     console.error('Camera error:', err);
-    showToast('ไม่สามารถเปิดกล้องได้ กรุณาอนุญาตสิทธิ์การใช้กล้อง');
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      alert('เบราว์เซอร์ไม่อนุญาตให้ใช้กล้อง: กรุณาแตะที่รูปกุญแจ 🔒 หรือการตั้งค่าหน้าเว็บเพื่อกด "อนุญาตให้ใช้กล้อง"');
+    } else {
+      // Try ultra-simple fallback constraint if high-res failed
+      try {
+        currentStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        rawVideo.srcObject = currentStream;
+        await rawVideo.play();
+        steadyCanvas.width = rawVideo.videoWidth || 640;
+        steadyCanvas.height = rawVideo.videoHeight || 480;
+        if (permOverlay) permOverlay.classList.add('hidden');
+      } catch (fallbackErr) {
+        alert('ไม่สามารถเปิดกล้องได้: ' + fallbackErr.message);
+      }
+    }
   }
 }
 
@@ -630,6 +650,14 @@ function initUI() {
     state.smoothRollRad = 0;
     showToast('🎯 รีเซ็ตจุดศูนย์กลางภาพแล้ว');
   });
+
+  // Start Camera Button on Permission Overlay
+  const btnStartCamera = document.getElementById('btnStartCamera');
+  if (btnStartCamera) {
+    btnStartCamera.addEventListener('click', () => {
+      startCamera();
+    });
+  }
 
   // Settings Modal Controls
   const settingsModal = document.getElementById('settingsModal');
