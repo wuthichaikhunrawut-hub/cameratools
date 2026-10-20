@@ -165,10 +165,17 @@ window.startCamera = async function () {
 // Listen to Gyroscope Orientation for Smooth Camera Pitch & Roll
 window.addEventListener('deviceorientation', (e) => {
   if (!state.enabled) return;
-  // Beta = Pitch (Tilt forward/back), Gamma = Roll (Tilt left/right)
   if (e.beta !== null && e.gamma !== null) {
-    state.gyroPitch = (e.beta - 60) * (Math.PI / 180); // Neutral ~60 deg holding angle
-    state.gyroRoll = e.gamma * (Math.PI / 180);
+    const p = (e.beta - 60) * (Math.PI / 180);
+    const r = e.gamma * (Math.PI / 180);
+
+    // Deadzone filter for Gyro: Ignore micro sensor jitter (< 0.015 rad ~ 0.8 deg)
+    if (Math.abs(p - state.gyroPitch) > 0.015) {
+      state.gyroPitch = p;
+    }
+    if (Math.abs(r - state.gyroRoll) > 0.015) {
+      state.gyroRoll = r;
+    }
   }
 }, { passive: true });
 
@@ -182,7 +189,10 @@ window.addEventListener('devicemotion', (e) => {
   if (ag && ag.x !== null && ag.y !== null) {
     const roll = Math.atan2(ag.x, ag.y);
     if (Math.abs(roll) < 0.75) {
-      state.rawRollRad = roll;
+      // Deadzone for horizon roll jitter
+      if (Math.abs(roll - state.rawRollRad) > 0.01) {
+        state.rawRollRad = roll;
+      }
     }
   }
 
@@ -191,14 +201,19 @@ window.addEventListener('devicemotion', (e) => {
     const ay = lin.y || 0;
     const mag = Math.hypot(ax, ay);
 
+    // Deadzone: Ignore micro sensor noise when holding still (< 0.4 m/s^2)
+    if (mag < 0.4) {
+      return;
+    }
+
     if (mag > 12) {
       state.velX *= 0.2;
       state.velY *= 0.2;
       state.offsetX *= 0.3;
       state.offsetY *= 0.3;
     } else {
-      state.velX += ax * 0.008;
-      state.velY += -ay * 0.008;
+      state.velX += ax * 0.006;
+      state.velY += -ay * 0.006;
     }
   }
 }, { passive: true });
@@ -212,13 +227,16 @@ function renderLoop() {
   const cw = steadyCanvas.width;
   const ch = steadyCanvas.height;
 
-  // 1. Gyro low-pass smoothing
-  state.smoothGyroPitch = state.smoothGyroPitch * 0.88 + state.gyroPitch * 0.12;
-  state.smoothGyroRoll = state.smoothGyroRoll * 0.88 + state.gyroRoll * 0.12;
+  // 1. Gyro low-pass smoothing (gentle response)
+  state.smoothGyroPitch = state.smoothGyroPitch * 0.94 + state.gyroPitch * 0.06;
+  state.smoothGyroRoll = state.smoothGyroRoll * 0.94 + state.gyroRoll * 0.06;
 
-  // Angular displacement in pixels
-  const gyroShiftY = (state.smoothGyroPitch - state.gyroPitch) * ch * 0.75;
-  const gyroShiftX = (state.smoothGyroRoll - state.gyroRoll) * cw * 0.75;
+  // Angular displacement in pixels with deadband
+  let gyroShiftY = (state.smoothGyroPitch - state.gyroPitch) * ch * 0.45;
+  let gyroShiftX = (state.smoothGyroRoll - state.gyroRoll) * cw * 0.45;
+
+  if (Math.abs(gyroShiftX) < 1.5) gyroShiftX = 0;
+  if (Math.abs(gyroShiftY) < 1.5) gyroShiftY = 0;
 
   if (state.enabled) {
     state.velX -= state.offsetX * 0.18;
@@ -229,6 +247,10 @@ function renderLoop() {
 
     state.offsetX += state.velX;
     state.offsetY += state.velY;
+
+    // Zero out sub-pixel jitter
+    if (Math.abs(state.offsetX) < 1.0) state.offsetX = 0;
+    if (Math.abs(state.offsetY) < 1.0) state.offsetY = 0;
 
     const maxShiftX = cw * (state.cropPercent * 0.45);
     const maxShiftY = ch * (state.cropPercent * 0.45);
