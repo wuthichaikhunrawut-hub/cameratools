@@ -183,6 +183,25 @@
 
     <!-- Toast Notification & Download Modal -->
     <div class="toast hidden" id="toastMsg"></div>
+
+    <!-- Video Saved / Download Dialog Modal -->
+    <div class="save-modal-overlay hidden" id="saveModal">
+      <div class="save-modal-card">
+        <h3>🎬 บันทึกคลิปเรียบร้อย!</h3>
+        <p class="modal-sub">ดูคลิปตัวอย่างและกดยืนยันบันทึกลงมือถือ</p>
+        <div class="modal-video-wrap">
+          <video id="modalPreviewVideo" controls playsinline></video>
+        </div>
+        <div class="modal-actions">
+          <a id="btnDownloadFile" class="modal-btn primary" download="UltraSteady_Video.webm">
+            ⬇️ บันทึกลงเครื่อง (Save to Device)
+          </a>
+          <button class="modal-btn secondary" id="btnCloseModal">
+            ✖️ ปิดหน้าต่าง
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>

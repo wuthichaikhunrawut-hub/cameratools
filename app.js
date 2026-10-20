@@ -411,22 +411,25 @@ function toggleRecording() {
   const btnRecord = document.getElementById('btnRecord');
   const recIndicator = document.getElementById('recIndicator');
   const recTimerText = document.getElementById('recTimerText');
+  const saveModal = document.getElementById('saveModal');
+  const modalPreviewVideo = document.getElementById('modalPreviewVideo');
+  const btnDownloadFile = document.getElementById('btnDownloadFile');
+  const btnCloseModal = document.getElementById('btnCloseModal');
 
   if (!isRecording) {
     recordedChunks = [];
-    const canvasStream = steadyCanvas.captureStream(60);
+    const canvasStream = steadyCanvas.captureStream(30); // 30fps is rock solid for mobile encoder
 
-    // Choose best supported codec (MP4 H.264 or WebM VP9/VP8)
+    // Strict Android-friendly codec fallback
     const mimeTypes = [
-      'video/mp4;codecs=avc1',
-      'video/mp4',
-      'video/webm;codecs=vp9',
       'video/webm;codecs=vp8',
-      'video/webm'
+      'video/webm',
+      'video/mp4;codecs=avc1',
+      'video/mp4'
     ];
     let selectedMime = '';
     for (const m of mimeTypes) {
-      if (MediaRecorder.isTypeSupported(m)) {
+      if (typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(m)) {
         selectedMime = m;
         break;
       }
@@ -435,10 +438,15 @@ function toggleRecording() {
     try {
       mediaRecorder = new MediaRecorder(canvasStream, {
         mimeType: selectedMime || undefined,
-        videoBitsPerSecond: state.videoBitrate
+        videoBitsPerSecond: Math.min(state.videoBitrate, 15000000)
       });
     } catch (e) {
-      mediaRecorder = new MediaRecorder(canvasStream);
+      try {
+        mediaRecorder = new MediaRecorder(canvasStream);
+      } catch (err) {
+        showToast('มือถือไม่รองรับ MediaRecorder สำหรับการอัดวิดีโอ');
+        return;
+      }
     }
 
     mediaRecorder.ondataavailable = (ev) => {
@@ -448,21 +456,46 @@ function toggleRecording() {
     };
 
     mediaRecorder.onstop = () => {
-      const ext = (selectedMime && selectedMime.includes('mp4')) ? 'mp4' : 'webm';
-      const blob = new Blob(recordedChunks, { type: selectedMime || 'video/webm' });
+      const mime = selectedMime || 'video/webm';
+      const isMp4 = mime.includes('mp4');
+      const ext = isMp4 ? 'mp4' : 'webm';
+      const blob = new Blob(recordedChunks, { type: mime });
+
+      if (blob.size === 0) {
+        showToast('เกิดข้อผิดพลาด: ไฟล์วิดีโอมีขนาด 0 byte');
+        return;
+      }
+
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      a.href = url;
-      a.download = `UltraSteady_${timestamp}.${ext}`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-      showToast(`บันทึกวิดีโอเรียบร้อย! (.${ext})`, 3500);
+      const filename = `UltraSteady_${Date.now()}.${ext}`;
+
+      // 1. Setup Save Dialog Modal
+      modalPreviewVideo.src = url;
+      btnDownloadFile.href = url;
+      btnDownloadFile.download = filename;
+      saveModal.classList.remove('hidden');
+
+      // 2. Also try direct automatic download trigger
+      try {
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => a.remove(), 1000);
+      } catch (e) {}
+
+      showToast(`อัดเสร็จแล้ว (${(blob.size / (1024 * 1024)).toFixed(1)} MB) กดบันทึกลงเครื่องได้เลย!`, 3500);
     };
 
-    mediaRecorder.start(200);
+    btnCloseModal.onclick = () => {
+      saveModal.classList.add('hidden');
+      modalPreviewVideo.pause();
+      modalPreviewVideo.src = '';
+    };
+
+    mediaRecorder.start(500); // chunk every 500ms
     isRecording = true;
     btnRecord.classList.add('recording');
     recIndicator.classList.remove('hidden');
@@ -475,7 +508,9 @@ function toggleRecording() {
     }, 500);
     showToast('กำลังบันทึกวิดีโอกันสั่น...');
   } else {
-    mediaRecorder.stop();
+    try {
+      mediaRecorder.stop();
+    } catch (e) {}
     isRecording = false;
     btnRecord.classList.remove('recording');
     recIndicator.classList.add('hidden');
