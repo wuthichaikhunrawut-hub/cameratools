@@ -20,31 +20,12 @@ let prevLuma = null;
 
 // UI Elements
 const hudModeBadge = document.getElementById('hudModeBadge');
-const hudResBadge = document.getElementById('hudResBadge');
-const hudFpsBadge = document.getElementById('hudFpsBadge');
-const shakeMeterFill = document.getElementById('shakeMeterFill');
-const shakePxText = document.getElementById('shakePxText');
-const rollAngleText = document.getElementById('rollAngleText');
 const horizonLine = document.querySelector('.horizon-line');
-const pipRawBox = document.getElementById('pipRawBox');
-const sharpenMatrix = document.getElementById('sharpenMatrix');
 const toastMsg = document.getElementById('toastMsg');
-
-// Controls
 const sliderSmooth = document.getElementById('sliderSmooth');
-const valSmooth = document.getElementById('sliderSmooth').nextElementSibling;
-const sliderCrop = document.getElementById('sliderCrop');
-const valCrop = document.getElementById('sliderCrop').nextElementSibling;
-const chkOpticalFlow = document.getElementById('chkOpticalFlow');
+const valSmooth = document.getElementById('valSmooth');
 const chkHorizonLock = document.getElementById('chkHorizonLock');
-
-const sliderSharpness = document.getElementById('sliderSharpness');
-const valSharpness = document.getElementById('valSharpness');
-const sliderClarity = document.getElementById('sliderClarity');
-const valClarity = document.getElementById('valClarity');
 const selectRes = document.getElementById('selectRes');
-const selectBitrate = document.getElementById('selectBitrate');
-const chkAntiBlur = document.getElementById('chkAntiBlur');
 
 // State
 let currentStream = null;
@@ -394,23 +375,10 @@ function renderLoop(now) {
     rawPreviewCtx.drawImage(rawVideo, 0, 0, rawPreviewCanvas.width, rawPreviewCanvas.height);
   }
 
-  // 3. Telemetry UI
-  const shakeMagPx = Math.round(Math.hypot(state.offsetX, state.offsetY));
-  shakePxText.textContent = `${shakeMagPx} px`;
-  const meterPct = Math.min(100, Math.round((shakeMagPx / Math.max(1, cw * 0.1)) * 100));
-  shakeMeterFill.style.width = `${Math.max(6, meterPct)}%`;
-
+  // 3. Telemetry line
   const deg = (state.smoothRollRad * (180 / Math.PI)).toFixed(1);
-  rollAngleText.textContent = `${deg}°`;
-  horizonLine.style.transform = `rotate(${-deg}deg)`;
-
-  // FPS Counter
-  frameCount++;
-  if (now - lastFpsTime >= 500) {
-    const fps = Math.round((frameCount * 1000) / (now - lastFpsTime));
-    hudFpsBadge.textContent = `${fps} FPS`;
-    frameCount = 0;
-    lastFpsTime = now;
+  if (horizonLine) {
+    horizonLine.style.transform = `rotate(${-deg}deg)`;
   }
 }
 
@@ -545,146 +513,95 @@ function takeSnapshot() {
 
 // Wire UI Events
 function initUI() {
-  // Zoom Buttons
-  document.querySelectorAll('.zoom-btn').forEach((btn) => {
+  // Zoom Chips
+  document.querySelectorAll('.zoom-chip').forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.zoom-btn').forEach((b) => b.classList.remove('active'));
+      document.querySelectorAll('.zoom-chip').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       currentZoom = parseFloat(btn.dataset.zoom) || 1.0;
       applyHardwareZoom(currentZoom);
-      showToast(`ซูม: ${currentZoom}x`, 1200);
+      showToast(`ซูม: ${currentZoom}x`, 1000);
     });
   });
 
   // Touch Pinch-to-Zoom on Viewport
-  const viewportWrap = document.getElementById('viewportWrap');
-  viewportWrap.addEventListener('touchstart', (e) => {
-    if (e.touches.length === 2) {
-      pinchStartDist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      pinchStartZoom = currentZoom;
-    }
-  }, { passive: true });
+  const cameraRoot = document.getElementById('cameraRoot');
+  if (cameraRoot) {
+    cameraRoot.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        pinchStartDist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        pinchStartZoom = currentZoom;
+      }
+    }, { passive: true });
 
-  viewportWrap.addEventListener('touchmove', (e) => {
-    if (e.touches.length === 2 && pinchStartDist > 0) {
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      const scale = dist / pinchStartDist;
-      currentZoom = Math.max(1.0, Math.min(4.0, +(pinchStartZoom * scale).toFixed(2)));
-      applyHardwareZoom(currentZoom);
+    cameraRoot.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2 && pinchStartDist > 0) {
+        const dist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        const scale = dist / pinchStartDist;
+        currentZoom = Math.max(1.0, Math.min(3.0, +(pinchStartZoom * scale).toFixed(1)));
+        applyHardwareZoom(currentZoom);
 
-      // Update button highlights
-      document.querySelectorAll('.zoom-btn').forEach((b) => {
-        b.classList.toggle('active', parseFloat(b.dataset.zoom) === currentZoom);
-      });
-    }
-  }, { passive: true });
+        document.querySelectorAll('.zoom-chip').forEach((b) => {
+          b.classList.toggle('active', parseFloat(b.dataset.zoom) === currentZoom);
+        });
+      }
+    }, { passive: true });
+  }
 
-  // Preset buttons
-  document.querySelectorAll('.preset-pill').forEach((btn) => {
+  // Settings Mode Buttons
+  document.querySelectorAll('.mode-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.preset-pill').forEach((b) => b.classList.remove('active'));
+      document.querySelectorAll('.mode-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       const preset = btn.dataset.preset;
 
       if (preset === 'standard') {
         state.enabled = true;
-        state.cropPercent = 0.15;
-        state.smoothness = 0.80;
-        hudModeBadge.textContent = 'STANDARD 15%';
+        state.cropPercent = 0.12;
+        state.smoothness = 0.65;
+        hudModeBadge.textContent = 'STANDARD';
       } else if (preset === 'ultra') {
         state.enabled = true;
-        state.cropPercent = 0.28;
-        state.smoothness = 0.88;
-        hudModeBadge.textContent = 'SUPER ULTRA';
+        state.cropPercent = 0.22;
+        state.smoothness = 0.72;
+        hudModeBadge.textContent = 'ULTRA STEADY';
       } else if (preset === 'gimbal') {
         state.enabled = true;
-        state.cropPercent = 0.38;
-        state.smoothness = 0.95;
-        state.useHorizonLock = true;
-        chkHorizonLock.checked = true;
+        state.cropPercent = 0.32;
+        state.smoothness = 0.82;
         hudModeBadge.textContent = 'GIMBAL LOCK';
       } else if (preset === 'off') {
         state.enabled = false;
         hudModeBadge.textContent = 'RAW (ปิดกันสั่น)';
       }
-
-      sliderCrop.value = Math.round(state.cropPercent * 100);
-      valCrop.textContent = `${sliderCrop.value}%`;
-      sliderSmooth.value = Math.round(state.smoothness * 100);
-      valSmooth.textContent = `${sliderSmooth.value}%`;
     });
   });
 
-  // Panel tabs
-  document.querySelectorAll('.tab-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach((c) => c.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById(btn.dataset.tab).classList.add('active');
+  if (sliderSmooth) {
+    sliderSmooth.addEventListener('input', () => {
+      state.smoothness = Number(sliderSmooth.value) / 100;
+      if (valSmooth) valSmooth.textContent = `${sliderSmooth.value}%`;
     });
-  });
+  }
 
-  // Stabilization Sliders
-  sliderSmooth.addEventListener('input', () => {
-    state.smoothness = Number(sliderSmooth.value) / 100;
-    valSmooth.textContent = `${sliderSmooth.value}%`;
-  });
+  if (chkHorizonLock) {
+    chkHorizonLock.addEventListener('change', () => {
+      state.useHorizonLock = chkHorizonLock.checked;
+    });
+  }
 
-  sliderCrop.addEventListener('input', () => {
-    state.cropPercent = Number(sliderCrop.value) / 100;
-    valCrop.textContent = `${sliderCrop.value}%`;
-  });
-
-  chkOpticalFlow.addEventListener('change', () => {
-    state.useOpticalFlow = chkOpticalFlow.checked;
-  });
-
-  chkHorizonLock.addEventListener('change', () => {
-    state.useHorizonLock = chkHorizonLock.checked;
-  });
-
-  // Clarity & Sharpness Sliders
-  sliderSharpness.addEventListener('input', () => {
-    state.sharpness = Number(sliderSharpness.value);
-    valSharpness.textContent = `${state.sharpness}%`;
-    updateGpuFilters();
-  });
-
-  sliderClarity.addEventListener('input', () => {
-    state.clarity = Number(sliderClarity.value);
-    valClarity.textContent = `${state.clarity}%`;
-    updateGpuFilters();
-  });
-
-  selectRes.addEventListener('change', () => {
-    state.targetResHeight = Number(selectRes.value);
-    startCamera();
-  });
-
-  selectBitrate.addEventListener('change', () => {
-    state.videoBitrate = Number(selectBitrate.value);
-    showToast(`ตั้งค่าบิตเรตวิดีโอ: ${state.videoBitrate / 1000000} Mbps`);
-  });
-
-  chkAntiBlur.addEventListener('change', () => {
-    state.antiBlurShutter = chkAntiBlur.checked;
-    applyHardwareEnhancements();
-    updateGpuFilters();
-  });
-
-  // Top Bar Actions
-  document.getElementById('btnCompare').addEventListener('click', (e) => {
-    showPip = !showPip;
-    pipRawBox.classList.toggle('hidden', !showPip);
-    e.currentTarget.classList.toggle('active', showPip);
-  });
+  if (selectRes) {
+    selectRes.addEventListener('change', () => {
+      state.targetResHeight = Number(selectRes.value);
+      startCamera();
+    });
+  }
 
   document.getElementById('btnTorch').addEventListener('click', async (e) => {
     if (!currentStream) return;

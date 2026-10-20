@@ -2,11 +2,11 @@
 <html lang="th">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="theme-color" content="#090a0f" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>UltraSteady Pro Cam</title>
+  <title>UltraSteady Camera</title>
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
   <link rel="manifest" href="manifest.json" />
@@ -16,186 +16,118 @@
   <!-- Hidden raw video element fed by camera -->
   <video id="rawVideo" autoplay playsinline muted style="display:none;"></video>
 
-  <!-- Main Viewport Container -->
-  <div class="app-container">
-    <!-- Top Minimal HUD Bar -->
-    <header class="top-hud">
-      <div class="hud-left">
-        <span class="badge badge-steady" id="hudModeBadge">ULTRA 22%</span>
-        <span class="badge badge-res" id="hudResBadge">HD 720p</span>
-        <span class="badge badge-fps" id="hudFpsBadge">-- FPS</span>
+  <!-- Fullscreen Camera Viewport -->
+  <div class="camera-root" id="cameraRoot">
+    <!-- Main Fullscreen Stabilized Canvas -->
+    <canvas id="steadyCanvas"></canvas>
+
+    <!-- Subtle Horizon Guide Line -->
+    <div class="horizon-guide" id="horizonGuide">
+      <div class="horizon-line"></div>
+    </div>
+
+    <!-- Minimal Top Controls Overlay -->
+    <header class="camera-top-overlay">
+      <div class="top-left-status">
+        <span class="mode-tag" id="hudModeBadge">ULTRA STEADY</span>
       </div>
-      <div class="hud-right">
-        <button class="icon-btn" id="btnCompare" title="เทียบภาพสั่น">
-          <span>PIP</span>
-        </button>
-        <button class="icon-btn" id="btnTorch" title="ไฟฉาย">
-          <span>🔦</span>
-        </button>
-        <button class="icon-btn" id="btnSwitchCam" title="สลับกล้อง">
-          <span>🔄</span>
-        </button>
-        <button class="icon-btn icon-settings" id="btnOpenSettings" title="ตั้งค่าระบบ">
-          <span>⚙️ ตั้งค่า</span>
-        </button>
+      <div class="top-right-actions">
+        <button class="glass-icon-btn" id="btnTorch" title="ไฟฉาย">🔦</button>
+        <button class="glass-icon-btn" id="btnSwitchCam" title="สลับกล้อง">🔄</button>
+        <button class="glass-icon-btn" id="btnOpenSettings" title="ตั้งค่า">⚙️</button>
       </div>
     </header>
 
-    <!-- Telemetry Thin Bar -->
-    <div class="telemetry-bar">
-      <div class="telemetry-item">
-        <span class="label">แรงสั่น:</span>
-        <div class="meter-track">
-          <div class="meter-fill" id="shakeMeterFill"></div>
-        </div>
-        <span class="val" id="shakePxText">0 px</span>
-      </div>
-      <div class="telemetry-item">
-        <span class="label">ระดับน้ำ:</span>
-        <span class="val" id="rollAngleText">0.0°</span>
-      </div>
+    <!-- Recording Indicator -->
+    <div class="rec-pill hidden" id="recIndicator">
+      <span class="rec-blink"></span>
+      <span id="recTimerText">00:00</span>
     </div>
 
-    <!-- Main Fullscreen Stabilized Viewport -->
-    <main class="viewport-wrap" id="viewportWrap">
-      <canvas id="steadyCanvas"></canvas>
-
-      <!-- Horizon Level Guide Line -->
-      <div class="horizon-guide" id="horizonGuide">
-        <div class="horizon-line"></div>
-        <div class="horizon-center-dot"></div>
-      </div>
-
-      <!-- Quick Zoom Selector Floating Overlay -->
-      <div class="zoom-pill-bar">
-        <button class="zoom-btn active" data-zoom="1.0">1x</button>
-        <button class="zoom-btn" data-zoom="1.5">1.5x</button>
-        <button class="zoom-btn" data-zoom="2.0">2x</button>
-        <button class="zoom-btn" data-zoom="3.0">3x</button>
-      </div>
-
-      <!-- Raw Unstabilized PIP Preview -->
-      <div class="pip-raw-box hidden" id="pipRawBox">
-        <span class="pip-label">ภาพดิบไม่กันสั่น</span>
-        <canvas id="rawPreviewCanvas" width="160" height="280"></canvas>
-      </div>
-
-      <!-- Recording Timer Overlay -->
-      <div class="rec-indicator hidden" id="recIndicator">
-        <span class="rec-dot"></span>
-        <span id="recTimerText">00:00</span>
-      </div>
-    </main>
-
-    <!-- Quick Mode Selector Bar (Simple bottom pills) -->
-    <div class="preset-bar">
-      <button class="preset-pill" data-preset="standard">ปกติ (12%)</button>
-      <button class="preset-pill active" data-preset="ultra">Ultra Steady (22%)</button>
-      <button class="preset-pill" data-preset="gimbal">Gimbal Lock (32%)</button>
-      <button class="preset-pill" data-preset="off">ปิดกันสั่น</button>
+    <!-- Clean Floating Zoom Pills -->
+    <div class="camera-zoom-bar">
+      <button class="zoom-chip active" data-zoom="1.0">1x</button>
+      <button class="zoom-chip" data-zoom="2.0">2x</button>
+      <button class="zoom-chip" data-zoom="3.0">3x</button>
     </div>
 
-    <!-- Bottom Shutter Bar -->
-    <footer class="bottom-bar">
-      <button class="action-btn secondary" id="btnSnapPhoto" title="ถ่ายภาพนิ่ง">
-        📸 ถ่ายภาพ
+    <!-- Clean Native Bottom Controls -->
+    <footer class="camera-bottom-overlay">
+      <button class="sub-action-btn" id="btnSnapPhoto" title="ถ่ายภาพนิ่ง">
+        📸
       </button>
 
-      <button class="shutter-btn" id="btnRecord" aria-label="เริ่มหรือหยุดอัดวิดีโอ">
-        <div class="shutter-inner" id="shutterInner"></div>
+      <button class="main-shutter-btn" id="btnRecord" aria-label="ถ่ายวิดีโอ">
+        <div class="shutter-core" id="shutterInner"></div>
       </button>
 
-      <button class="action-btn secondary" id="btnRecenter" title="รีเซ็ตจุดศูนย์กลาง">
-        🎯 รีเซ็ตศูนย์
+      <button class="sub-action-btn" id="btnRecenter" title="รีเซ็ตระนาบ">
+        🎯
       </button>
     </footer>
 
-    <!-- Fullscreen Settings Modal (Hidden by Default) -->
+    <!-- Clean Settings Modal (Only opens when gear icon is clicked) -->
     <div class="settings-modal-overlay hidden" id="settingsModal">
       <div class="settings-modal-sheet">
         <div class="settings-header">
-          <h2>⚙️ ตั้งค่ากล้อง & กันสั่น</h2>
-          <button class="icon-btn close-btn" id="btnCloseSettings">✕ ปิด</button>
+          <h3>⚙️ ตั้งค่ากล้องกันสั่น</h3>
+          <button class="close-btn" id="btnCloseSettings">✕</button>
         </div>
 
         <div class="settings-body">
-          <div class="panel-tabs">
-            <button class="tab-btn active" data-tab="tab-steady">🛡️ กันสั่น (Stabilizer)</button>
-            <button class="tab-btn" data-tab="tab-clarity">✨ ความคมชัด & บิตเรต</button>
-          </div>
-
-          <!-- Tab 1: Steady -->
-          <div class="tab-content active" id="tab-steady">
-            <div class="control-row">
-              <label>ความหน่วงความนิ่ง (Smoothness)</label>
-              <input type="range" id="sliderSmooth" min="50" max="97" value="85" />
-              <span class="ctrl-val" id="valSmooth">85%</span>
-            </div>
-            <div class="control-row">
-              <label>ระยะเผื่อขอบกันสั่น (Crop Margin)</label>
-              <input type="range" id="sliderCrop" min="5" max="40" value="22" />
-              <span class="ctrl-val" id="valCrop">22%</span>
-            </div>
-            <div class="toggle-grid">
-              <label class="toggle-chip">
-                <input type="checkbox" id="chkOpticalFlow" checked />
-                <span>👁️ วิเคราะห์พิกเซลภาพช่วยกันสั่น (สำหรับมือถือไม่มี Gyro)</span>
-              </label>
-              <label class="toggle-chip">
-                <input type="checkbox" id="chkHorizonLock" checked />
-                <span>📐 ล็อกเส้นขอบฟ้าอัตโนมัติ (Horizon Lock)</span>
-              </label>
+          <div class="setting-item">
+            <label>โหมดกันสั่น</label>
+            <div class="mode-select-grid">
+              <button class="mode-btn" data-preset="standard">ปกติ (12%)</button>
+              <button class="mode-btn active" data-preset="ultra">Ultra (22%)</button>
+              <button class="mode-btn" data-preset="gimbal">Gimbal (32%)</button>
+              <button class="mode-btn" data-preset="off">ปิดกันสั่น</button>
             </div>
           </div>
 
-          <!-- Tab 2: Clarity & Resolution -->
-          <div class="tab-content" id="tab-clarity">
-            <div class="control-row">
-              <label>เร่งมิติความใส คอนทราสต์</label>
-              <input type="range" id="sliderClarity" min="0" max="50" value="15" />
-              <span class="ctrl-val" id="valClarity">15%</span>
-            </div>
-            <div class="control-row">
-              <label>ความละเอียดกล้อง</label>
-              <select id="selectRes" class="ctrl-select">
-                <option value="720" selected>HD 720p (ลื่นไหล แนะนำสำหรับ Vivo Y21T)</option>
-                <option value="1080">Full HD 1080p</option>
-              </select>
-            </div>
-            <div class="control-row">
-              <label>บิตเรตไฟล์วิดีโอ</label>
-              <select id="selectBitrate" class="ctrl-select">
-                <option value="5000000">5 Mbps (เบาเครื่อง)</option>
-                <option value="8000000" selected>8 Mbps (ลื่นไหล แนะนำ)</option>
-                <option value="14000000">14 Mbps (High Bitrate)</option>
-              </select>
-            </div>
+          <div class="setting-item">
+            <label>ความนิ่ง (Smoothness): <b id="valSmooth">72%</b></label>
+            <input type="range" id="sliderSmooth" min="40" max="95" value="72" />
+          </div>
+
+          <div class="setting-item">
+            <label class="check-label">
+              <input type="checkbox" id="chkHorizonLock" checked />
+              <span>📐 ล็อกเส้นขอบฟ้าอัตโนมัติ (Horizon Lock)</span>
+            </label>
+          </div>
+
+          <div class="setting-item">
+            <label>ความละเอียดกล้อง</label>
+            <select id="selectRes" class="setting-select">
+              <option value="720" selected>HD 720p (ลื่นไหล แนะนำ Vivo Y21T)</option>
+              <option value="1080">Full HD 1080p</option>
+            </select>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Toast Notification & Download Modal -->
-    <div class="toast hidden" id="toastMsg"></div>
-
-    <!-- Video Saved / Download Dialog Modal -->
+    <!-- Save Video Modal -->
     <div class="save-modal-overlay hidden" id="saveModal">
       <div class="save-modal-card">
-        <h3>🎬 บันทึกคลิปเรียบร้อย!</h3>
-        <p class="modal-sub">ดูคลิปตัวอย่างและกดยืนยันบันทึกลงมือถือ</p>
+        <h3>🎬 ถ่ายเสร็จเรียบร้อย!</h3>
         <div class="modal-video-wrap">
           <video id="modalPreviewVideo" controls playsinline></video>
         </div>
         <div class="modal-actions">
           <a id="btnDownloadFile" class="modal-btn primary" download="UltraSteady_Video.webm">
-            ⬇️ บันทึกลงเครื่อง (Save to Device)
+            ⬇️ บันทึกลงเครื่อง
           </a>
           <button class="modal-btn secondary" id="btnCloseModal">
-            ✖️ ปิดหน้าต่าง
+            ✕ ปิด
           </button>
         </div>
       </div>
     </div>
+
+    <!-- Toast Notification -->
+    <div class="toast hidden" id="toastMsg"></div>
   </div>
 
   <script src="app.js"></script>
